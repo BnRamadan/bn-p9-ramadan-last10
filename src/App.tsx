@@ -14,6 +14,7 @@ interface Challenge {
   difficulty: 'سهل' | 'متوسط' | 'متقدم' | 'ليلة القدر';
   points: number;
   isQadrNight?: boolean;
+  isCustom?: boolean; // إضافة خاصية للتحديات المخصصة
 }
 
 interface Achievement {
@@ -476,6 +477,61 @@ function App() {
   const [showStats, setShowStats] = useState(false);
   const [timeLeft, setTimeLeft] = useState('');
   const [isRamadanEnded, setIsRamadanEnded] = useState(false);
+  const [customChallenges, setCustomChallenges] = useState<Challenge[]>(() => {
+    const saved = localStorage.getItem('customChallenges');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showAddChallenge, setShowAddChallenge] = useState(false);
+  const [newChallenge, setNewChallenge] = useState<Partial<Challenge>>({
+    category: 'prayer',
+    difficulty: 'سهل',
+    points: 50,
+    isCustom: true,
+  });
+
+  // حفظ التحديات المخصصة في localStorage
+  useEffect(() => {
+    localStorage.setItem('customChallenges', JSON.stringify(customChallenges));
+  }, [customChallenges]);
+
+  // دالة إضافة تحدي جديد
+  const handleAddChallenge = () => {
+    if (newChallenge.title && newChallenge.description) {
+      const challenge: Challenge = {
+        ...(newChallenge as Challenge),
+        id: Date.now(),
+        isCustom: true,
+      };
+      setCustomChallenges([...customChallenges, challenge]);
+      setShowAddChallenge(false);
+      setNewChallenge({
+        category: 'prayer',
+        difficulty: 'سهل',
+        points: 50,
+        isCustom: true,
+      });
+    }
+  };
+
+  // دالة حذف تحدي مخصص
+  const handleDeleteChallenge = (challengeId: number) => {
+    // التحقق مما إذا كان التحدي مكتملاً قبل حذفه
+    const isCompleted = completedChallenges.includes(challengeId);
+    const challenge = customChallenges.find((c) => c.id === challengeId);
+
+    if (challenge) {
+      // خصم النقاط إذا كان التحدي مكتملاً
+      if (isCompleted) {
+        setTotalPoints((prev) => Math.max(0, prev - challenge.points));
+      }
+
+      // حذف التحدي من القائمة المكتملة إذا كان موجوداً
+      setCompletedChallenges((prev) => prev.filter((id) => id !== challengeId));
+
+      // حذف التحدي من القائمة المخصصة
+      setCustomChallenges((prev) => prev.filter((c) => c.id !== challengeId));
+    }
+  };
 
   useEffect(() => {
     const handleScroll = () => {
@@ -540,6 +596,29 @@ function App() {
     checkAchievements();
   }, [completedChallenges, totalPoints]);
 
+  // تحديث النقاط عند تحميل التحديات المكتملة
+  useEffect(() => {
+    const calculateInitialPoints = () => {
+      const allChallenges = [...challenges, ...customChallenges];
+      const challengePoints = completedChallenges.reduce((total, challengeId) => {
+        const challenge = allChallenges.find((c) => c.id === challengeId);
+        return total + (challenge ? challenge.points : 0);
+      }, 0);
+
+      // حساب نقاط الإنجازات
+      const achievementPoints = unlockedAchievements.reduce((total, achievementId) => {
+        const achievement = achievements.find((a) => a.id === achievementId);
+        return total + (achievement ? achievement.points : 0);
+      }, 0);
+
+      const totalPoints = challengePoints + achievementPoints;
+      setTotalPoints(totalPoints);
+      localStorage.setItem('totalPoints', JSON.stringify(totalPoints));
+    };
+
+    calculateInitialPoints();
+  }, [completedChallenges, challenges, customChallenges, unlockedAchievements]);
+
   const createStars = () => {
     const starsContainer = document.getElementById('stars');
     if (starsContainer) {
@@ -561,7 +640,15 @@ function App() {
         setUnlockedAchievements((prev) => [...prev, achievement.id]);
         setCurrentAchievement(achievement);
         setShowAchievement(true);
-        setTotalPoints((prev) => prev + achievement.points);
+
+        // تحديث النقاط الإجمالية عند تحقيق الإنجاز
+        setTotalPoints((prev) => {
+          const newPoints = prev + achievement.points;
+          // حفظ النقاط الجديدة في localStorage
+          localStorage.setItem('totalPoints', JSON.stringify(newPoints));
+          return newPoints;
+        });
+
         setTimeout(() => setShowAchievement(false), 3000);
       }
     });
@@ -580,20 +667,26 @@ function App() {
   };
 
   const handleChallengeComplete = (challengeId: number) => {
-    const challenge = challenges.find((c) => c.id === challengeId);
-
     setCompletedChallenges((prev) => {
-      if (prev.includes(challengeId)) {
-        setTotalPoints((current) => current - (challenge?.points || 0));
-        return prev.filter((id) => id !== challengeId);
-      }
-      setTotalPoints((current) => current + (challenge?.points || 0));
-      return [...prev, challengeId];
-    });
+      const isCompleted = prev.includes(challengeId);
+      const newCompleted = isCompleted ? prev.filter((id) => id !== challengeId) : [...prev, challengeId];
 
-    setShowConfetti(true);
-    createCelebration();
-    setTimeout(() => setShowConfetti(false), 3000);
+      // تحديث النقاط
+      const challenge = [...challenges, ...customChallenges].find((c) => c.id === challengeId);
+      if (challenge) {
+        const pointsToAdd = isCompleted ? -challenge.points : challenge.points;
+        setTotalPoints((prev) => Math.max(0, prev + pointsToAdd));
+      }
+
+      // إضافة تأثيرات الاحتفال عند إكمال التحدي
+      if (!isCompleted) {
+        setShowConfetti(true);
+        createCelebration();
+        setTimeout(() => setShowConfetti(false), 3000);
+      }
+
+      return newCompleted;
+    });
   };
 
   const filteredChallenges = challenges.filter((challenge) => activeFilter === 'all' || challenge.category === activeFilter);
@@ -890,8 +983,72 @@ function App() {
                 </div>
               </motion.div>
             ))}
+
+            {/* إضافة قسم التحديات المخصصة */}
+            <div className="challenges-header">
+              <button className="add-challenge-btn" onClick={() => setShowAddChallenge(true)}>
+                إضافة تحدي جديد +
+              </button>
+            </div>
+
+            {/* عرض التحديات المخصصة */}
+            {customChallenges
+              .filter((challenge) => activeFilter === 'all' || challenge.category === activeFilter)
+              .map((challenge) => (
+                <motion.div key={challenge.id} className="challenge-item" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} whileHover={{ scale: 1.02 }}>
+                  <label className="challenge-checkbox">
+                    <input type="checkbox" checked={completedChallenges.includes(challenge.id)} onChange={() => handleChallengeComplete(challenge.id)} className="challenge-check" />
+                    <span className="checkmark"></span>
+                  </label>
+                  <div className="challenge-content">
+                    <div className="challenge-title">{challenge.title}</div>
+                    <div className="challenge-description">{challenge.description}</div>
+                    <div className="challenge-meta">
+                      <span className="challenge-badge">{challenge.difficulty}</span>
+                      <span className="challenge-points">
+                        <Star className="inline-block w-4 h-4 ml-1" />
+                        {challenge.points} نقطة
+                      </span>
+                      <button className="delete-btn" onClick={() => handleDeleteChallenge(challenge.id)}>
+                        حذف
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
           </div>
         </div>
+
+        {/* نافذة إضافة تحدي جديد */}
+        {showAddChallenge && (
+          <div className="modal-overlay">
+            <div className="modal-content">
+              <h3>إضافة تحدي جديد</h3>
+              <input type="text" placeholder="عنوان التحدي" value={newChallenge.title || ''} onChange={(e) => setNewChallenge({ ...newChallenge, title: e.target.value })} />
+              <textarea placeholder="وصف التحدي" value={newChallenge.description || ''} onChange={(e) => setNewChallenge({ ...newChallenge, description: e.target.value })} />
+              <select value={newChallenge.category} onChange={(e) => setNewChallenge({ ...newChallenge, category: e.target.value as Challenge['category'] })}>
+                <option value="prayer">الصلاة</option>
+                <option value="quran">القرآن</option>
+                <option value="charity">الصدقة</option>
+                <option value="dhikr">الذكر</option>
+              </select>
+              <select value={newChallenge.difficulty} onChange={(e) => setNewChallenge({ ...newChallenge, difficulty: e.target.value as Challenge['difficulty'] })}>
+                <option value="سهل">سهل</option>
+                <option value="متوسط">متوسط</option>
+                <option value="متقدم">متقدم</option>
+              </select>
+              <input type="number" placeholder="النقاط" value={newChallenge.points} onChange={(e) => setNewChallenge({ ...newChallenge, points: parseInt(e.target.value) })} />
+              <div className="modal-actions">
+                <button className="add-btn" onClick={handleAddChallenge}>
+                  إضافة
+                </button>
+                <button className="cancel-btn" onClick={() => setShowAddChallenge(false)}>
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <motion.div className="achievements-section" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
           <h2>الإنجازات</h2>
